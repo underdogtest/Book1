@@ -1,0 +1,419 @@
+
+new;
+cls;
+
+format /sa /str /rd 10,-1;
+format /mat /m1 /rd 10,8;   
+
+//*******************
+// Exogene Parameter:
+//*******************
+
+quarters=1;
+ta=60;
+tw=40;
+eta=2;
+betap=0.935;
+r=0.14;
+delta=0.10;
+gam0=7100;
+gam1=5;
+alpha=0.30;
+sigma=0.90;
+
+if quarters==1;
+tw=tw*4;
+ta=ta*4;
+delta=delta/4;   
+betap=0.98;    
+endif;
+
+//*******************
+// Globale Variablen:
+//*******************
+
+c1_global=0;
+k1_global=0;
+n1_global=0;
+c_vec=zeros(ta,1);
+n_vec=zeros(ta,1);
+k_vec=zeros(ta,1);
+age_vec=seqa(1,1,ta);
+mass_vec=ones(ta,1);
+
+//******************************
+// Berechnung des Steady States:
+//******************************
+
+t0=get_time();
+if quarters==1;
+kg=20;         // Guess fuer den Kapital-ArbeitsKoeffizienten
+else;
+kg=4;
+endif;    
+kg_new=10;    // Platzhalter der unten im Code angepasst wird
+i_ag_max=200; // maximale Iterationen fuer Loop
+i_ag=1;
+
+do while i_ag<=i_ag_max and abs(kg-kg_new)>1e-12;
+
+{w,r}=marg_prods(kg);
+
+//******************************
+// Berechnung der Altersprofile:
+//******************************
+
+k1=50;          // Platzhalter, der am Ende des Codes geupdated wird
+k60_guess=0.1;  // Guess fuer das Vermögen k60
+isec=1;         // Iterationsparameter beim Sekantenverfahren
+max_isec=300;   // Iterationsparameter beim Sekantenverfahren
+
+do while isec<=max_isec and abs(k1)>10^-12;
+
+//print "i_ag~kg~isec~s1: " i_ag~kg~isec~max_isec~k1;
+
+//***********************
+// Individuum mit age=60:
+//***********************
+
+age=ta;
+kt0=k60_guess;
+ct0=k60_guess*(1+r-delta);
+
+k_vec[age,1]=kt0;
+c_vec[age,1]=ct0;
+n_vec[age,1]=0;
+
+//***********************************
+// Individuum mit age<=59 und age>40:
+//***********************************
+
+age=age-1;
+do while age>tw;
+
+// Belegen der globalen Variablen:
+c1_global=c_vec[age+1,1];
+k1_global=k_vec[age+1,1];
+
+i=1;
+max_i=100;
+do while i<=max_i;
+
+// Erstellung eines Zufallsvektors fuer den Konsum mit
+// Werten zwischen 50 und 150 Prozent von c1_global:
+min_c=0.5;
+max_c=1.5;
+c_guess=(min_c+rndu(1,1)*(max_c-min_c))*c1_global;
+k_guess=(c_guess+k1_global)/(1+r-delta); // siehe Budgetgleichung
+
+// Aufruf von FixVMN1:
+#include toolbox.src;
+start=c_guess|k_guess;
+_MNR_Print=0;    // Output fuer FixVMN1, siehe toolbox.src
+_MNR_Stop=1e-12; // Toleranz fuer FixVMN1, siehe toolbox.src
+{x,crit}=FixVMN1(start,&focs_ret);
+
+ct0_opt=x[1,1];
+kt0_opt=x[2,1];
+
+// Check fuer FixVMN1:
+if crit[1,1]==0 and ct0_opt>0;
+    
+    k_vec[age,1]=kt0_opt;
+    c_vec[age,1]=ct0_opt;
+    n_vec[age,1]=0;
+    break;    
+
+elseif i<max_i;    
+    
+    print;
+    print "- Es existiert ein Problem mit der Loesung aus";
+    print "  FixVMN1! Das Programm erstellt neue Zufallszahlen";
+    print "  für neue Startwerte!";
+    i=i+1;  
+    
+elseif i==max_i;
+    
+    print;
+    print "- Das Programm konnte mit neuen Zufallszahlen";
+    print "  das Problem nicht loesen und bricht ab!";
+    print "  Info: Problem im Alter --> "$+ftocv(age,0,0);
+    end;
+    
+endif;
+
+endo;
+
+age=age-1;
+endo;
+
+
+//***********************************
+// Individuum mit age<=40 und age>=1:
+//***********************************
+
+do while age>=1;
+
+// Belegen der globalen Variablen:
+c1_global=c_vec[age+1,1];
+k1_global=k_vec[age+1,1];
+n1_global=n_vec[age+1,1];
+
+i=1;
+max_i=100;
+do while i<=max_i;
+
+// Erstellung eines Zufallsvektors fuer den Konsum mit
+// Werten zwischen 50 und 150 Prozent von c1_global und
+// eines Zufallsvektors fuer das Arbeitsangebot mit
+// Werten zwischen 0.1 und 1:
+  
+min_c=0.5;
+max_c=1.5;
+c_guess=(min_c+rndu(1,1)*(max_c-min_c))*c1_global;
+min_n=0.10;
+max_n=1.0;
+n_guess=(min_n+rndu(1,1)*(max_n-min_n));
+k_guess=(c_guess+k1_global-w*n_guess)/(1+r-delta); // siehe Budgetgleichung
+
+// Aufruf von FixVMN1:
+#include toolbox.src;
+start=c_guess|n_guess|k_guess;
+_MNR_Print=0;    // Output fuer FixVMN1, siehe toolbox.src
+_MNR_Stop=1e-12; // Toleranz fuer FixVMN1, siehe toolbox.src
+{x,crit}=FixVMN1(start,&focs_work);
+
+ct0_opt=x[1,1];
+nt0_opt=x[2,1];
+kt0_opt=x[3,1];
+
+// Check fuer FixVMN1:
+if crit[1,1]==0 and ct0_opt>0 and nt0_opt>0;
+    
+    k_vec[age,1]=kt0_opt;
+    c_vec[age,1]=ct0_opt;
+    n_vec[age,1]=nt0_opt;
+    break;    
+
+elseif i<max_i;    
+    
+    print;
+    print "- Es existiert ein Problem mit der Loesung aus";
+    print "  FixVMN1! Das Programm erstellt neue Zufallszahlen";
+    print "  für neue Startwerte!";
+    i=i+1;  
+    
+elseif i==max_i;
+    
+    print;
+    print "- Das Programm konnte mit neuen Zufallszahlen";
+    print "  das Problem nicht loesen und bricht ab!";
+    print "  Info: Problem im Alter --> "$+ftocv(age,0,0);
+    end;
+    
+endif;
+
+endo;
+
+age=age-1;
+endo;
+
+//******************************
+// Updates fuer Sekantenmethode:
+//******************************
+
+k1=k_vec[1,1];
+
+if isec==1;
+x1=k60_guess;
+fx1=k1;
+x2=k60_guess+0.1;
+k60_guess=x2;
+elseif isec>=2;
+x2=k60_guess;    
+fx2=k1;
+k60_guess=x1-(x2-x1)/(fx2-fx1)*fx1;
+x1=x2;
+fx1=fx2;    
+endif;
+
+isec=isec+1;
+endo;
+
+//*****************
+// Updates fuer kg:
+//*****************
+
+k_ag=sumc(k_vec.*mass_vec);
+n_ag=sumc(n_vec.*mass_vec);
+n_bar=sumc(n_vec[1:tw,1].*mass_vec[1:tw,1])/sumc(mass_vec[1:tw,1]);
+
+
+kg_new=k_ag/n_ag;
+kg=sigma*kg+(1-sigma)*kg_new;
+
+i_ag=i_ag+1;
+endo;
+
+//***********************
+// Ausgabe der Ergbnisse:
+//***********************
+
+print;
+print "Loesung bzgl. age_vec~k_vec~c_vec~n_vec:";
+print age_vec~k_vec~c_vec~n_vec;
+print;
+
+
+c_ag=sumc(c_vec.*mass_vec);
+y=prod(k_ag,n_ag);
+tol_check=1e-7;
+check1=c_ag+delta*k_ag-(w*n_ag+r*k_ag);
+check1=abs(check1)<tol_check;
+check2=y-(w*n_ag+r*k_ag);
+check2=abs(check2)<tol_check;
+
+print;
+print "Weitere Ergebnisse:";
+print;
+print "Check1:" check1;
+print "Check2:" check2;
+print "w:     " w;
+print "r:     " r;
+print "K/N:   " kg;
+print "N_bar: " n_bar;
+print "y:     " y;
+
+t1=get_time();
+print;
+print "Time: " t1-t0;
+
+end;
+//***********
+// Graphiken:
+//***********
+
+age_vec=age_vec+20;
+
+struct PlotControl myPlot;
+myplot=plotGetDefaults("xy");	
+myPlot.LegendBkdOpacity=1;
+myPlot.Legend.fontcolor="black";
+myPlot.axesNumbers.fontSize=12;
+myPlot.Legend.fontSize=12;
+myPlot.Legend.font="calibri";
+myPlot.AxesLabel.fontSize=13;
+myPlot.Title.fontSize=14;
+plotOpenWindow;   
+
+plotLayout(2,2,1);
+plotSetXLabel(&myplot,"Alter"); 
+plotSetYLabel(&myplot,""); 
+plotSetTitle(&myplot,"Kapitalstock");
+plotxy(myplot,age_vec,k_vec);
+
+plotLayout(2,2,2);
+plotSetXLabel(&myplot,"Alter"); 
+plotSetYLabel(&myplot,""); 
+plotSetTitle(&myplot,"Konsum");
+plotxy(myplot,age_vec,c_vec);
+
+plotLayout(2,2,3);
+plotSetXLabel(&myplot,"Alter"); 
+plotSetYLabel(&myplot,""); 
+plotSetTitle(&myplot,"Arbeitsangebot");
+plotxy(myplot,age_vec,n_vec);
+
+
+
+//********************************
+// Prozedur fuer die Faktorpreise:
+//********************************
+
+proc(2)=marg_prods(kn);
+local w,r;
+    
+w=(1-alpha)*(kn^alpha);
+r=alpha*(kn^(alpha-1));
+
+retp(w,r);
+endp;
+
+
+//**************************
+// Prozedur fuer den Output:
+//**************************
+
+proc(1)=prod(k_ag,n_ag);
+local y;
+    
+    y=(k_ag^alpha)*(n_ag^(1-alpha));
+
+retp(y);
+endp;
+
+
+//********************************************************
+// Prozedur fuer Bedingungen erster Ordnung eines Renters:
+//********************************************************
+
+proc(1)=focs_ret(x);
+    local y,y1,y2,ct0,kt0,nt0,nt1,ct1,kt1;
+    
+    ct0=x[1,1];  // Konsum in t
+    kt0=x[2,1];  // Ersparnis in t
+    
+    ct1=c1_global;  // Konsum in t+1 mit c1_global=globale Variable!
+    kt1=k1_global;  // Ersparnis in t+1, mit k1_global=globale Variable!
+   
+    y1=ct0^(-eta)-(ct1^(-eta))*betap*(1+r-delta);
+    y2=ct0+kt1-(kt0*(1+r-delta));
+
+    y=y1|y2;
+    
+retp(y);
+endp; 
+
+
+//**********************************************************
+// Prozedur fuer Bedingungen erster Ordnung eines Arbeiters:
+//**********************************************************
+
+proc(1)=focs_work(x);
+    local y,y1,y2,y3,ct0,kt0,nt0,nt1,ct1,kt1;
+    
+    ct0=x[1,1];  // Konsum in t
+    nt0=x[2,1];  // Arbeitsangebot in t
+    kt0=x[3,1];  // Ersparnis in t
+    
+    ct1=c1_global;  // Konsum in t+1 mit c1_global=globale Variable!
+    kt1=k1_global;  // Ersparnis in t+1, mit s1_global=globale Variable!
+    nt1=n1_global;  // Arbeitsangebot in t+1 mit n1_global=globale Variable!
+                    // PS: n1_global braucht man hier eigentlich nicht. Bei anderen
+                    // Nutzenfunktionen empfiehlt es sich jedoch, diese Variable 
+                    // zu verwenden
+   
+    y1=ct0^(-eta)-(ct1^(-eta))*betap*(1+r-delta);
+    y2=gam0*(nt0^gam1)-(ct0^(-eta))*w;
+    y3=ct0+kt1-(w*nt0+kt0*(1+r-delta));
+
+    y=y1|y2|y3;
+    
+retp(y);
+endp; 
+
+
+//****************************************************************
+// Prozedur: get_time() ******************************************
+//****************************************************************
+// Output: actual time in seconds ********************************
+//****************************************************************
+
+proc(1)=get_time();
+local t;
+	
+	t=time;
+	t=t[1,1]*60^2+t[2,1]*60+t[3,1];
+	
+retp(t);
+endp;
